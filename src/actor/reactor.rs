@@ -10,6 +10,7 @@
 mod animation;
 mod main_window;
 mod replay;
+pub mod saved_state;
 
 #[cfg(test)]
 mod restore_snapshots;
@@ -26,6 +27,7 @@ use main_window::MainWindowTracker;
 use objc2_core_foundation::CGRect;
 use redact::Secret;
 pub use replay::{Record, replay};
+use saved_state::Saver;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use tokio::sync::mpsc;
@@ -35,7 +37,6 @@ use super::mouse;
 use crate::actor::app::{AppInfo, AppThreadHandle, Quiet, Request, WindowId, WindowInfo, pid_t};
 use crate::actor::layout::{self, LayoutCommand, LayoutEvent, LayoutManager, LayoutWindowInfo};
 use crate::actor::raise::{self, RaiseManager, RaiseRequest};
-use crate::actor::saved_state::Saver;
 use crate::actor::space_manager::{SpaceManager, SpaceState};
 use crate::actor::{group_bars, space_manager, status, window_server, wm_controller};
 use crate::collections::{HashMap, HashSet};
