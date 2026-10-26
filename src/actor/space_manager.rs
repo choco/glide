@@ -81,6 +81,8 @@ pub struct SpaceManager {
     expose_active: bool,
     is_globally_enabled: bool,
     hotkeys_active: bool,
+    /// The space state last sent to the reactor.
+    reported_space_state: Option<SpaceState>,
 }
 
 impl SpaceManager {
@@ -122,6 +124,7 @@ impl SpaceManager {
             expose_active: false,
             is_globally_enabled,
             hotkeys_active: false,
+            reported_space_state: None,
         }
     }
 
@@ -134,6 +137,11 @@ impl SpaceManager {
 
     #[instrument(skip(self))]
     fn on_event(&mut self, event: Event) {
+        self.handle_event(event);
+        self.report_space_state();
+    }
+
+    fn handle_event(&mut self, event: Event) {
         match event {
             Event::ScreenParametersChanged {
                 screens: ids,
@@ -221,6 +229,16 @@ impl SpaceManager {
                 self.request_space_refresh();
             }
         }
+    }
+
+    /// Tell the reactor about changes to the space state so it can be saved.
+    fn report_space_state(&mut self) {
+        let state = self.space_state();
+        if self.reported_space_state.as_ref() == Some(&state) {
+            return;
+        }
+        self.reactor_tx.send(reactor::Event::SpaceStateChanged(state.clone()));
+        self.reported_space_state = Some(state);
     }
 
     fn space_state(&self) -> SpaceState {

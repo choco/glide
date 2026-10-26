@@ -107,7 +107,7 @@ fn guest(zip: &Path) -> anyhow::Result<()> {
         .trim()
         .trim_start_matches("glide ")
         .to_owned();
-    for file in ["state.ron", "state.prev.ron", "update.log"] {
+    for file in ["state.ron", "update.log"] {
         remove_file(&data_dir.join(file))?;
     }
     // Updates restore the saved state even with this off.
@@ -165,7 +165,7 @@ fn guest(zip: &Path) -> anyhow::Result<()> {
         let log = fs::read_to_string(&server_log).unwrap_or_default();
         Ok(log.contains("Restoring state saved by version").then_some(()))
     })?;
-    let restored = fs::read_to_string(data_dir.join("state.prev.ron"))?;
+    let restored = fs::read_to_string(data_dir.join("state.ron"))?;
     ensure!(
         restored.contains("globally_enabled:false"),
         "restored state didn't keep Glide paused"

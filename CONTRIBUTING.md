@@ -24,6 +24,8 @@ We believe *perfection is a process* and do not strive to get everything perfect
 
 We prefer code changes that are tested, and may ask for tests before merging. Tests should be manually verified to fail before the behavior change and succeed after. At some layers of the stack (e.g. the system level, app actor, and UI) this is not currently feasible, and we substitute with manual verification and sharing logs or screen captures instead.
 
+Tests must be deterministic. Avoid sleeping, polling until a deadline, or anything else that depends on timing, since those tests flake on slow or busy machines. Instead, give the test a way to wait for the work to finish (for example, by joining a background thread), or pass time in as a parameter.
+
 ## Product values and architecture
 
 * **Reliability.** This is the most important. The entire architecture is built around creating order from chaos. We don't introduce new sources of determinism, like timers, whenever possible.
@@ -86,6 +88,10 @@ run it with the `--restore` flag:
 ```
 cargo run --release -- --restore
 ```
+
+Glide also saves its state as it changes. To keep a development build from
+overwriting your saved state, pass `--no-save` (implied by `--one`). It still
+restores your saved state unless you also pass `--no-restore`.
 
 ### Building an app bundle
 

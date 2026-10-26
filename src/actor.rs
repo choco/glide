@@ -19,7 +19,6 @@ pub mod mouse;
 pub mod notification_center;
 pub mod raise;
 pub mod reactor;
-pub mod saved_state;
 pub mod server;
 pub mod space_manager;
 pub mod status;

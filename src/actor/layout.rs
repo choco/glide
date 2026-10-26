@@ -259,6 +259,9 @@ pub struct LayoutManager {
     interactive_move: Option<InteractiveScrollMove>,
     #[serde(skip, default = "default_config")]
     config: Arc<Config>,
+    /// Incremented whenever serialized state may have changed.
+    #[serde(skip)]
+    generation: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -377,6 +380,7 @@ impl LayoutManager {
             window_rules: Vec::new(),
             interactive_resize: None,
             interactive_move: None,
+            generation: 0,
             config,
         }
     }
@@ -398,6 +402,10 @@ impl LayoutManager {
             (_, kind) => kind,
         };
         if !self.scroll_enabled {
+            // Converting scroll layouts is the only way a config change
+            // modifies serialized state.
+            // TODO: Remove this if scroll layouts are removed.
+            self.generation += 1;
             self.convert_active_scroll_layouts_to_tree();
         }
     }
@@ -533,6 +541,7 @@ impl LayoutManager {
 
     pub fn handle_event(&mut self, event: LayoutEvent) -> EventResponse {
         debug!(?event);
+        self.generation += 1;
         match event {
             LayoutEvent::SpaceExposed(space, size) => {
                 self.debug_tree(space);
@@ -786,6 +795,7 @@ impl LayoutManager {
         visible_spaces: &[SpaceId],
         command: LayoutCommand,
     ) -> EventResponse {
+        self.generation += 1;
         if let Some(space) = space {
             let layout = self.layout(space);
             debug!("Tree:\n{}", self.tree.draw_tree(layout).trim());
@@ -1323,6 +1333,7 @@ impl LayoutManager {
         screen: &CGRect,
         config: &crate::config::ScrollConfig,
     ) -> EventResponse {
+        self.generation += 1;
         if !self.scroll_enabled {
             return EventResponse::default();
         }
@@ -1498,6 +1509,9 @@ impl LayoutManager {
                 changed = true;
             }
         }
+        if changed {
+            self.generation += 1;
+        }
         changed
     }
 
@@ -1571,6 +1585,7 @@ impl LayoutManager {
                 && let Some(target_node) = self.tree.window_node(layout, *wid)
             {
                 self.tree.swap_windows(source_node, target_node);
+                self.generation += 1;
                 if let Some(state) = self.interactive_move.as_mut() {
                     state.window_node = target_node;
                 }
@@ -1638,6 +1653,11 @@ impl LayoutManager {
         }
         File::create(path)?.write_all(self.serialize_to_string().as_bytes())?;
         Ok(())
+    }
+
+    /// A counter that changes whenever the serialized state may have changed.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn serialize_to_string(&self) -> String {
