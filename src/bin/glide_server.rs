@@ -15,7 +15,7 @@ use glide_wm::actor::layout::LayoutManager;
 use glide_wm::actor::mouse::Mouse;
 use glide_wm::actor::notification_center::NotificationCenter;
 use glide_wm::actor::reactor::{self, Reactor};
-use glide_wm::actor::saved_state::{self, SavedState};
+use glide_wm::actor::saved_state::{self, SavedState, Saver};
 use glide_wm::actor::server::MessageServer;
 use glide_wm::actor::space_manager::SpaceState;
 use glide_wm::actor::status::Status;
@@ -37,6 +37,8 @@ use tracing::{error, warn};
 #[command(version, name = "glide_server")]
 struct Cli {
     /// Only run the window manager on the current space.
+    ///
+    /// Implies --no-save.
     #[arg(long)]
     one: bool,
 
@@ -66,6 +68,10 @@ struct Cli {
     /// Start with a fresh layout instead of restoring the saved one.
     #[arg(long, overrides_with = "restore")]
     no_restore: bool,
+
+    /// Don't save the layout or enabled spaces, even on save_and_exit.
+    #[arg(long)]
+    no_save: bool,
 
     /// Record reactor events to the specified file path. Overwrites the file if
     /// exists.
@@ -165,6 +171,7 @@ fn main() {
         sm_rx,
         skylight_tx,
         restored_spaces,
+        saver(&opt),
     );
 
     let notification_center =
@@ -211,6 +218,17 @@ impl Cli {
             _ => None,
         }
     }
+}
+
+fn saver(opt: &Cli) -> Option<Saver> {
+    if opt.no_save || opt.one {
+        return None;
+    }
+    let Some(session) = LoginSessionId::current() else {
+        warn!("Not saving state because the login session is unknown");
+        return None;
+    };
+    Some(Saver::spawn(saved_state_file(), session))
 }
 
 fn restore(opt: &Cli, config: &Arc<Config>) -> (LayoutManager, Option<SpaceState>) {

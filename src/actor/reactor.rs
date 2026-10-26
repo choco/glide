@@ -35,7 +35,7 @@ use super::mouse;
 use crate::actor::app::{AppInfo, AppThreadHandle, Quiet, Request, WindowId, WindowInfo, pid_t};
 use crate::actor::layout::{self, LayoutCommand, LayoutEvent, LayoutManager, LayoutWindowInfo};
 use crate::actor::raise::{self, RaiseManager, RaiseRequest};
-use crate::actor::saved_state::SavedState;
+use crate::actor::saved_state::Saver;
 use crate::actor::space_manager::{SpaceManager, SpaceState};
 use crate::actor::{group_bars, space_manager, status, window_server, wm_controller};
 use crate::collections::{HashMap, HashSet};
@@ -205,6 +205,8 @@ pub enum Event {
 
     /// Save the state along with the space state, then exit.
     SaveAndExit(SpaceState),
+    /// The space state changed.
+    SpaceStateChanged(SpaceState),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -254,6 +256,9 @@ pub struct Reactor {
     mouse_tx: Option<mouse::Sender>,
     status_tx: Option<status::Sender>,
     group_indicators_tx: group_bars::Sender,
+    /// Saves the state. Not present in tests or when saving is disabled.
+    saver: Option<Saver>,
+    space_state: Option<SpaceState>,
 }
 
 /// How many times in a row we write the same frame to a window before giving
@@ -362,6 +367,7 @@ impl Reactor {
         sm_rx: space_manager::Receiver,
         skylight_tx: window_server::SkylightSender,
         restored_spaces: Option<SpaceState>,
+        saver: Option<Saver>,
     ) {
         thread::Builder::new()
             .name("reactor".to_string())
@@ -370,6 +376,7 @@ impl Reactor {
                     Reactor::new(config.clone(), layout, record, group_indicators_tx.clone());
                 reactor.mouse_tx.replace(mouse_tx.clone());
                 reactor.status_tx.replace(status_tx.clone());
+                reactor.saver = saver;
                 let space_manager = SpaceManager::new(
                     one_space,
                     config,
@@ -424,6 +431,8 @@ impl Reactor {
             mouse_tx: None,
             status_tx: None,
             group_indicators_tx: group_indicators_tx,
+            saver: None,
+            space_state: None,
         }
     }
 
@@ -481,9 +490,9 @@ impl Reactor {
     }
 
     fn handle_event(&mut self, event: Event) {
-        // Code that depends on the layout generation needs it to change
-        // whenever the serialized layout does. Check that here so tests catch
-        // any mutation path that forgets to update it.
+        // Autosave relies on the layout generation changing whenever the
+        // serialized layout does. Check that here so tests catch any mutation
+        // path that forgets to update it.
         #[cfg(test)]
         let before = (self.layout.generation(), self.layout.serialize_to_string());
         self.handle_event_inner(event);
@@ -492,6 +501,7 @@ impl Reactor {
             self.layout.generation() != before.0 || self.layout.serialize_to_string() == before.1,
             "layout changed without changing its generation"
         );
+        self.autosave();
     }
 
     fn handle_event_inner(&mut self, event: Event) {
@@ -877,6 +887,7 @@ impl Reactor {
                 println!("{}", self.layout.serialize_to_string());
             }
             Event::SaveAndExit(spaces) => self.save_and_exit(spaces),
+            Event::SpaceStateChanged(spaces) => self.space_state = Some(spaces),
             Event::ConfigChanged(config) => {
                 self.layout.set_config(&config);
                 self.config = config;
@@ -892,9 +903,24 @@ impl Reactor {
         }
     }
 
-    fn save_and_exit(&self, spaces: SpaceState) -> ! {
+    fn autosave(&mut self) {
+        // Drags and resizes change the layout on every mouse event; save once
+        // when they end.
+        if self.in_drag || self.resizing_window.is_some() {
+            return;
+        }
+        if let (Some(saver), Some(spaces)) = (&mut self.saver, &self.space_state) {
+            saver.save_if_changed(&self.layout, spaces);
+        }
+    }
+
+    fn save_and_exit(&mut self, spaces: SpaceState) -> ! {
         info!("SaveAndExit command received");
-        match SavedState::save(&self.layout, spaces, &crate::config::saved_state_file()) {
+        let Some(saver) = self.saver.take() else {
+            info!("Exiting without saving because saving is disabled");
+            std::process::exit(0);
+        };
+        match saver.save_and_finish(&self.layout, spaces) {
             Ok(()) => std::process::exit(0),
             Err(e) => {
                 error!("Could not save state: {e}");
@@ -2418,6 +2444,54 @@ pub mod tests {
             wids.contains(&resized),
             "release should correct the window: {wids:?}"
         );
+    }
+
+    #[test]
+    fn it_saves_once_a_resize_ends() {
+        let mut apps = Apps::new();
+        let mut reactor = Reactor::new_for_test(LayoutManager::new_for_test());
+        reactor.handle_event(Event::ScreenParametersChanged {
+            frames: vec![CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.))],
+            spaces: vec![Some(SpaceId::new(1))],
+            scale_factors: vec![2.0],
+            converter: CoordinateConverter::default(),
+            on_screen: Default::default(),
+        });
+        reactor.handle_events(apps.make_app(1, make_windows(2)));
+        reactor.handle_event(Event::StartupComplete);
+        reactor.handle_event(Event::SpaceStateChanged(SpaceState {
+            enabled: Default::default(),
+            disabled: Default::default(),
+            globally_enabled: true,
+        }));
+        apps.simulate_until_quiet(&mut reactor);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.ron");
+        let session = crate::sys::session::LoginSessionId::new_for_test("a");
+        reactor.saver = Some(Saver::spawn(path.clone(), session.clone()));
+
+        let resized = WindowId::new(1, 1);
+        let frame = apps.windows[&resized].frame;
+        let new_frame = CGRect::new(
+            frame.origin,
+            CGSize::new(frame.size.width - 100., frame.size.height),
+        );
+        apps.windows.get_mut(&resized).unwrap().frame = new_frame;
+        reactor.handle_event(Event::WindowFrameChanged(
+            resized,
+            new_frame,
+            apps.windows[&resized].last_seen_txid,
+            Requested(false),
+            Some(MouseState::Down),
+        ));
+        reactor.saver.take().unwrap().finish().unwrap();
+        assert!(!path.exists(), "shouldn't save while the mouse is down");
+
+        reactor.saver = Some(Saver::spawn(path.clone(), session));
+        reactor.handle_event(Event::MouseUp);
+        reactor.saver.take().unwrap().finish().unwrap();
+        assert!(path.exists(), "should save when the resize ends");
     }
 
     /// The MouseUp event can be lost, e.g. if the event tap is disabled while

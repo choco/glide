@@ -89,6 +89,9 @@ run it with the `--restore` flag:
 cargo run --release -- --restore
 ```
 
+Glide also saves its state as it changes. To keep a development build from
+overwriting your saved state, pass `--no-save` (implied by `--one`).
+
 ### Building an app bundle
 
 To build an app bundle locally, you have to comment out the line in Cargo.toml

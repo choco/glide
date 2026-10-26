@@ -3,16 +3,21 @@
 
 //! State saved on exit and restored on the next launch in the same login
 //! session.
+//!
+//! The [`Saver`] also saves the state as it changes, so it survives Glide
+//! exiting unexpectedly. Hard crashes like segfaults give us no chance to save
+//! on the way out.
 
-use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
+use std::thread::JoinHandle;
 use std::time::SystemTime;
+use std::{fs, thread};
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{debug, info, warn};
 
 use crate::actor::layout::LayoutManager;
 use crate::actor::space_manager::SpaceState;
@@ -31,24 +36,18 @@ pub struct SavedState<L = LayoutManager> {
 }
 
 impl SavedState {
-    /// Save the current state to `path`.
-    pub fn save(layout: &LayoutManager, spaces: SpaceState, path: &Path) -> io::Result<()> {
-        // State without a session can never be restored.
-        let session = LoginSessionId::current()
-            .ok_or_else(|| io::Error::other("could not determine the login session"))?;
+    fn serialize(
+        layout: &LayoutManager,
+        spaces: SpaceState,
+        session: LoginSessionId,
+    ) -> io::Result<String> {
         let state = SavedState {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             session: Some(session),
             spaces,
             layout,
         };
-        let serialized = ron::ser::to_string(&state).map_err(io::Error::other)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let tmp = path.with_extension("ron.tmp");
-        fs::write(&tmp, serialized)?;
-        fs::rename(&tmp, path)
+        ron::ser::to_string(&state).map_err(io::Error::other)
     }
 
     /// Load the state at `path` without checking the session.
@@ -128,6 +127,104 @@ pub fn take_legacy_layout(
     };
     discard(path)?;
     result
+}
+
+/// Replace the contents of `path` such that a crash at any point leaves either
+/// the old or the new contents in place.
+fn write(path: &Path, contents: &str) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    fs::write(&tmp, contents)?;
+    fs::rename(&tmp, path)
+}
+
+/// Saves the state as it changes, writing on a background thread.
+///
+/// All writes happen in order on that thread, so a newer state is never
+/// replaced by an older one.
+pub struct Saver {
+    session: LoginSessionId,
+    tx: mpsc::Sender<String>,
+    /// Returns the result of the last write once `tx` is dropped.
+    writer: JoinHandle<io::Result<()>>,
+    /// What was last saved, to skip saving when nothing changed.
+    last_layout_generation: Option<u64>,
+    last_spaces: Option<SpaceState>,
+    last_serialized: String,
+}
+
+impl Saver {
+    pub fn spawn(path: PathBuf, session: LoginSessionId) -> Self {
+        let (tx, rx) = mpsc::channel::<String>();
+        let writer = thread::Builder::new()
+            .name("saver".to_string())
+            .spawn(move || {
+                let mut result = Ok(());
+                while let Ok(mut contents) = rx.recv() {
+                    // Only the most recent state matters.
+                    while let Ok(newer) = rx.try_recv() {
+                        contents = newer;
+                    }
+                    result = write(&path, &contents);
+                    match &result {
+                        Ok(()) => debug!("Saved state to {}", path.display()),
+                        Err(e) => warn!("Could not save state: {e}"),
+                    }
+                }
+                result
+            })
+            .unwrap();
+        Saver {
+            session,
+            tx,
+            writer,
+            last_layout_generation: None,
+            last_spaces: None,
+            last_serialized: String::new(),
+        }
+    }
+
+    /// Save the state in the background if it changed since the last call.
+    pub fn save_if_changed(&mut self, layout: &LayoutManager, spaces: &SpaceState) {
+        if self.last_layout_generation == Some(layout.generation())
+            && self.last_spaces.as_ref() == Some(spaces)
+        {
+            return;
+        }
+        self.last_layout_generation = Some(layout.generation());
+        self.last_spaces = Some(spaces.clone());
+        let serialized = match SavedState::serialize(layout, spaces.clone(), self.session.clone()) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("Could not serialize state: {e}");
+                return;
+            }
+        };
+        // Layout generations change more often than the serialized state.
+        if serialized == self.last_serialized {
+            return;
+        }
+        _ = self.tx.send(serialized.clone());
+        self.last_serialized = serialized;
+    }
+
+    /// Save the state and wait for all writes to finish.
+    pub fn save_and_finish(self, layout: &LayoutManager, spaces: SpaceState) -> io::Result<()> {
+        let serialized = SavedState::serialize(layout, spaces, self.session.clone())?;
+        if serialized != self.last_serialized {
+            _ = self.tx.send(serialized);
+        }
+        self.finish()
+    }
+
+    /// Wait for pending writes to finish, returning the result of the last one.
+    pub(crate) fn finish(self) -> io::Result<()> {
+        drop(self.tx);
+        self.writer.join().unwrap()
+    }
 }
 
 /// Move the state saved at `path` aside so it is not restored.
@@ -257,11 +354,41 @@ mod tests {
     fn save_round_trips() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("state.ron");
-        SavedState::save(&LayoutManager::new_for_test(), spaces(), &path).unwrap();
+        let session = LoginSessionId::new_for_test("a");
+        let saver = Saver::spawn(path.clone(), session.clone());
+        saver.save_and_finish(&LayoutManager::new_for_test(), spaces()).unwrap();
 
         let state = SavedState::load(&path, config()).unwrap();
         assert_eq!(state.version, env!("CARGO_PKG_VERSION"));
-        assert_eq!(state.session, LoginSessionId::current());
+        assert_eq!(state.session, Some(session));
+        assert_eq!(state.spaces, spaces());
+    }
+
+    #[test]
+    fn autosave_can_be_restored() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.ron");
+        let session = LoginSessionId::new_for_test("a");
+        let mut saver = Saver::spawn(path.clone(), session.clone());
+        saver.save_if_changed(&LayoutManager::new_for_test(), &spaces());
+        saver.finish().unwrap();
+
+        let state = SavedState::take(&path, Some(&session), config()).unwrap().unwrap();
+        assert_eq!(state.spaces, spaces());
+    }
+
+    #[test]
+    fn save_and_finish_is_not_overwritten_by_earlier_saves() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.ron");
+        let layout = LayoutManager::new_for_test();
+        let mut saver = Saver::spawn(path.clone(), LoginSessionId::new_for_test("a"));
+        let mut earlier = spaces();
+        earlier.globally_enabled = true;
+        saver.save_if_changed(&layout, &earlier);
+        saver.save_and_finish(&layout, spaces()).unwrap();
+
+        let state = SavedState::load(&path, config()).unwrap();
         assert_eq!(state.spaces, spaces());
     }
 }
