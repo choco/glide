@@ -1204,13 +1204,14 @@ impl LayoutManager {
         space: SpaceId,
         screen: CGRect,
         config: &Config,
+        now: Instant,
     ) -> Vec<(WindowId, CGRect)> {
         let layout = self.layout(space);
         //debug!("{}", self.tree.draw_tree(space));
         let frames = self.tree.calculate_layout(layout, screen, config);
         if self.scroll_enabled && self.tree.is_scroll_layout(layout) {
             if let Some(vp) = self.viewports.get(&layout) {
-                return vp.apply_viewport_to_frames(screen, frames, Instant::now());
+                return vp.apply_viewport_to_frames(screen, frames, now);
             }
         }
         frames
@@ -1221,6 +1222,7 @@ impl LayoutManager {
         space: SpaceId,
         screen: CGRect,
         config: &Config,
+        now: Instant,
     ) -> (Vec<(WindowId, CGRect)>, Vec<crate::model::GroupBarInfo>) {
         let layout = self.layout(space);
         let (sizes, mut groups) = self.tree.calculate_layout_and_groups(layout, screen, config);
@@ -1232,9 +1234,9 @@ impl LayoutManager {
         }
         if self.scroll_enabled && self.tree.is_scroll_layout(layout) {
             if let Some(vp) = self.viewports.get(&layout) {
-                let transformed = vp.apply_viewport_to_frames(screen, sizes, Instant::now());
+                let transformed = vp.apply_viewport_to_frames(screen, sizes, now);
                 for group in &mut groups {
-                    group.indicator_frame = vp.offset_rect(group.indicator_frame, Instant::now());
+                    group.indicator_frame = vp.offset_rect(group.indicator_frame, now);
                 }
                 return (transformed, groups);
             }
@@ -1273,7 +1275,13 @@ impl LayoutManager {
         }
     }
 
-    pub fn update_viewport_for_focus(&mut self, space: SpaceId, screen: CGRect, config: &Config) {
+    pub fn update_viewport_for_focus(
+        &mut self,
+        space: SpaceId,
+        screen: CGRect,
+        config: &Config,
+        now: Instant,
+    ) {
         if !self.scroll_enabled {
             return;
         }
@@ -1307,23 +1315,23 @@ impl LayoutManager {
                         frame.size.width,
                         center_mode,
                         gap,
-                        Instant::now(),
+                        now,
                     );
                 }
             }
         }
     }
 
-    pub fn has_active_scroll_animation(&self) -> bool {
+    pub fn has_active_scroll_animation(&self, now: Instant) -> bool {
         if !self.scroll_enabled {
             return false;
         }
-        self.viewports.values().any(|vp| vp.is_animating(Instant::now()))
+        self.viewports.values().any(|vp| vp.is_animating(now))
     }
 
-    pub fn tick_viewports(&mut self) {
+    pub fn tick_viewports(&mut self, now: Instant) {
         for vp in self.viewports.values_mut() {
-            vp.tick(Instant::now());
+            vp.tick(now);
         }
     }
 
@@ -1414,6 +1422,7 @@ impl LayoutManager {
         point: CGPoint,
         screen: CGRect,
         config: &Config,
+        now: Instant,
     ) -> Option<(NodeId, NodeId, ResizeEdge)> {
         if !self.scroll_enabled {
             return None;
@@ -1422,7 +1431,7 @@ impl LayoutManager {
         if !self.tree.is_scroll_layout(layout) {
             return None;
         }
-        let frames = self.calculate_layout(space, screen, config);
+        let frames = self.calculate_layout(space, screen, config, now);
         for (wid, frame) in &frames {
             let edges = detect_edges(point, *frame);
             if !edges.is_empty() {
@@ -1440,6 +1449,7 @@ impl LayoutManager {
         point: CGPoint,
         screen: CGRect,
         config: &Config,
+        now: Instant,
     ) -> Option<(WindowId, NodeId)> {
         if !self.scroll_enabled {
             return None;
@@ -1448,7 +1458,7 @@ impl LayoutManager {
         if !self.tree.is_scroll_layout(layout) {
             return None;
         }
-        let frames = self.calculate_layout(space, screen, config);
+        let frames = self.calculate_layout(space, screen, config, now);
         for (wid, frame) in &frames {
             if frame.contains(point) {
                 let node = self.tree.window_node(layout, *wid)?;
@@ -1516,10 +1526,16 @@ impl LayoutManager {
         changed
     }
 
-    pub fn end_interactive_resize(&mut self, space: SpaceId, screen: CGRect, config: &Config) {
+    pub fn end_interactive_resize(
+        &mut self,
+        space: SpaceId,
+        screen: CGRect,
+        config: &Config,
+        now: Instant,
+    ) {
         if self.interactive_resize.take().is_some() {
             self.clear_user_scrolling(space);
-            self.update_viewport_for_focus(space, screen, config);
+            self.update_viewport_for_focus(space, screen, config, now);
         }
     }
 
@@ -1549,6 +1565,7 @@ impl LayoutManager {
         mouse: CGPoint,
         screen: CGRect,
         config: &Config,
+        now: Instant,
     ) -> bool {
         let Some(state) = self.interactive_move.as_mut() else {
             return false;
@@ -1574,10 +1591,10 @@ impl LayoutManager {
 
             let target_frame;
             if let Some(vp) = vp_opt {
-                if !vp.is_visible(*frame, Instant::now()) {
+                if !vp.is_visible(*frame, now) {
                     continue;
                 }
-                target_frame = vp.offset_rect(*frame, Instant::now());
+                target_frame = vp.offset_rect(*frame, now);
             } else {
                 target_frame = *frame;
             }
@@ -1596,10 +1613,16 @@ impl LayoutManager {
         false
     }
 
-    pub fn end_interactive_move(&mut self, space: SpaceId, screen: CGRect, config: &Config) {
+    pub fn end_interactive_move(
+        &mut self,
+        space: SpaceId,
+        screen: CGRect,
+        config: &Config,
+        now: Instant,
+    ) {
         if self.interactive_move.take().is_some() {
             self.clear_user_scrolling(space);
-            self.update_viewport_for_focus(space, screen, config);
+            self.update_viewport_for_focus(space, screen, config, now);
         }
     }
 
@@ -1956,6 +1979,7 @@ mod tests {
                 space,
                 screen,
                 &Config::default(), // TODO stop being lazy
+                Instant::now(),
             );
             layout.sort_by_key(|(wid, _)| *wid);
             layout
@@ -2173,8 +2197,10 @@ mod tests {
 
         // Make the first window float.
         _ = mgr.handle_command(Some(space), &[space], ToggleWindowFloating);
-        let sizes: HashMap<_, _> =
-            mgr.calculate_layout(space, screen1, config).into_iter().collect();
+        let sizes: HashMap<_, _> = mgr
+            .calculate_layout(space, screen1, config, Instant::now())
+            .into_iter()
+            .collect();
         assert_eq!(sizes[&WindowId::new(pid, 2)], rect(0, 0, 60, 120));
         assert_eq!(sizes[&WindowId::new(pid, 3)], rect(60, 0, 60, 120));
 
@@ -2191,8 +2217,10 @@ mod tests {
 
         // Make the second window float.
         _ = mgr.handle_command(Some(space), &[space], ToggleWindowFloating);
-        let sizes: HashMap<_, _> =
-            mgr.calculate_layout(space, screen1, config).into_iter().collect();
+        let sizes: HashMap<_, _> = mgr
+            .calculate_layout(space, screen1, config, Instant::now())
+            .into_iter()
+            .collect();
         assert_eq!(sizes[&WindowId::new(pid, 3)], rect(0, 0, 120, 120));
 
         // Toggle back to tiled.
@@ -2231,8 +2259,10 @@ mod tests {
         _ = mgr.handle_event(SpaceExposed(space, screen1.size));
         _ = mgr.handle_event(WindowsOnScreenUpdated(space, pid, make_windows(pid, 3)));
 
-        let sizes: HashMap<_, _> =
-            mgr.calculate_layout(space, screen1, config).into_iter().collect();
+        let sizes: HashMap<_, _> = mgr
+            .calculate_layout(space, screen1, config, Instant::now())
+            .into_iter()
+            .collect();
         assert_eq!(sizes[&WindowId::new(pid, 2)], rect(0, 0, 60, 120));
         assert_eq!(sizes[&WindowId::new(pid, 3)], rect(60, 0, 60, 120));
 

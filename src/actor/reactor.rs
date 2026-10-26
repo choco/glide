@@ -456,23 +456,29 @@ impl Reactor {
         // TODO: Accessibility APIs may be too slow for 120Hz; consider screen-capture animation approach.
         let tick_interval = Duration::from_secs_f64(1.0 / 120.0);
         let mut tick_timer = Timer::manual();
+        // Whether the tick timer is scheduled to fire. Tracking it keeps the
+        // loop to one reading of the clock per iteration, which everything in
+        // that iteration is evaluated against.
+        let mut ticking = false;
 
         loop {
-            let animating = self.layout.has_active_scroll_animation();
             tokio::select! {
                 event = events.recv() => {
                     let Some((span, event)) = event else { break };
                     let _guard = span.enter();
-                    let was_animating = self.layout.has_active_scroll_animation();
-                    self.handle_event(event);
-                    if !was_animating && self.layout.has_active_scroll_animation() {
+                    let now = Instant::now();
+                    self.handle_event_at(event, now);
+                    if !ticking && self.layout.has_active_scroll_animation(now) {
                         tick_timer.set_next_fire(Duration::ZERO);
+                        ticking = true;
                     }
                 }
-                _ = tick_timer.next(), if animating => {
-                    self.layout.tick_viewports();
-                    self.update_layout(&[], true);
-                    if self.layout.has_active_scroll_animation() {
+                _ = tick_timer.next(), if ticking => {
+                    let now = Instant::now();
+                    self.layout.tick_viewports(now);
+                    self.update_layout(&[], true, now);
+                    ticking = self.layout.has_active_scroll_animation(now);
+                    if ticking {
                         tick_timer.set_next_fire(tick_interval);
                     }
                 }
@@ -492,12 +498,16 @@ impl Reactor {
     }
 
     fn handle_event(&mut self, event: Event) {
+        self.handle_event_at(event, Instant::now());
+    }
+
+    fn handle_event_at(&mut self, event: Event, now: Instant) {
         // Autosave relies on the layout generation changing whenever the
         // serialized layout does. Check that here so tests catch any mutation
         // path that forgets to update it.
         #[cfg(test)]
         let before = (self.layout.generation(), self.layout.serialize_to_string());
-        self.handle_event_inner(event);
+        self.handle_event_inner(event, now);
         #[cfg(test)]
         assert!(
             self.layout.generation() != before.0 || self.layout.serialize_to_string() == before.1,
@@ -506,7 +516,7 @@ impl Reactor {
         self.autosave();
     }
 
-    fn handle_event_inner(&mut self, event: Event) {
+    fn handle_event_inner(&mut self, event: Event, now: Instant) {
         self.record.on_event(&event);
         self.log_event(&event);
         let mut animation_focus_wids: Vec<WindowId> = Vec::new();
@@ -743,14 +753,22 @@ impl Reactor {
                 if let Some(screen) = self.active_screen()
                     && let Some(space) = screen.space
                 {
-                    if let Some((col, win, edges)) =
-                        self.layout.hit_test_scroll_edges(space, point, screen.frame, &self.config)
-                    {
+                    if let Some((col, win, edges)) = self.layout.hit_test_scroll_edges(
+                        space,
+                        point,
+                        screen.frame,
+                        &self.config,
+                        now,
+                    ) {
                         self.layout.begin_interactive_resize(col, win, edges, point);
                         self.in_drag = true;
-                    } else if let Some((wid, node)) =
-                        self.layout.hit_test_scroll_window(space, point, screen.frame, &self.config)
-                    {
+                    } else if let Some((wid, node)) = self.layout.hit_test_scroll_window(
+                        space,
+                        point,
+                        screen.frame,
+                        &self.config,
+                        now,
+                    ) {
                         self.layout.begin_interactive_move(space, wid, node, point);
                         self.in_drag = true;
                     }
@@ -760,13 +778,14 @@ impl Reactor {
                 if let Some(&screen) = self.active_screen() {
                     if screen.space.is_some() {
                         if self.layout.update_interactive_resize(point, screen.frame) {
-                            self.update_layout(&[], true);
+                            self.update_layout(&[], true, now);
                         } else if self.layout.update_interactive_move(
                             point,
                             screen.frame,
                             &self.config,
+                            now,
                         ) {
-                            self.update_layout(&[], false);
+                            self.update_layout(&[], false, now);
                         }
                     }
                 }
@@ -775,8 +794,18 @@ impl Reactor {
                 if self.layout.has_interactive_state() {
                     if let Some(&screen) = self.active_screen() {
                         if let Some(space) = screen.space {
-                            self.layout.end_interactive_resize(space, screen.frame, &self.config);
-                            self.layout.end_interactive_move(space, screen.frame, &self.config);
+                            self.layout.end_interactive_resize(
+                                space,
+                                screen.frame,
+                                &self.config,
+                                now,
+                            );
+                            self.layout.end_interactive_move(
+                                space,
+                                screen.frame,
+                                &self.config,
+                                now,
+                            );
                         }
                     }
                 }
@@ -901,7 +930,7 @@ impl Reactor {
             self.update_active_screen();
         }
         if !self.in_drag {
-            self.update_layout(&animation_focus_wids, is_resize);
+            self.update_layout(&animation_focus_wids, is_resize, now);
         }
     }
 
@@ -1233,7 +1262,7 @@ impl Reactor {
     }
 
     #[instrument(skip(self), fields())]
-    pub fn update_layout(&mut self, new_wids: &[WindowId], skip_anim: bool) {
+    pub fn update_layout(&mut self, new_wids: &[WindowId], skip_anim: bool, now: Instant) {
         let main_window = self.main_window();
         trace!(?main_window);
         let mut anim = Animation::new();
@@ -1241,10 +1270,10 @@ impl Reactor {
         for &screen in &self.screens {
             let Some(space) = screen.space else { continue };
             if !skip_anim {
-                self.layout.update_viewport_for_focus(space, screen.frame, &self.config);
+                self.layout.update_viewport_for_focus(space, screen.frame, &self.config, now);
             }
             let (result, groups) =
-                self.layout.calculate_layout_and_groups(space, screen.frame, &self.config);
+                self.layout.calculate_layout_and_groups(space, screen.frame, &self.config, now);
 
             self.group_indicators_tx
                 .send(group_bars::Event::GroupsUpdated { space_id: space, groups });
@@ -1279,7 +1308,6 @@ impl Reactor {
             // Some apps move a window back after we place it, which turns into
             // an event that makes us place it again. Stop writing the frame
             // once it's clear the app won't keep it.
-            let now = Instant::now();
             let attempt = self.frame_attempts.entry(wid).or_insert(FrameAttempt {
                 target: target_frame,
                 count: 0,
@@ -1313,8 +1341,9 @@ impl Reactor {
         }
         // If the user is doing something with the mouse we don't want to
         // animate on top of that.
-        let skip_anim =
-            skip_anim || !self.config.settings.animate || self.layout.has_active_scroll_animation();
+        let skip_anim = skip_anim
+            || !self.config.settings.animate
+            || self.layout.has_active_scroll_animation(now);
         if let Some(tx) = &self.animation_tx
             && !anim.is_empty()
         {
@@ -2269,12 +2298,17 @@ pub mod tests {
         let dragged = WindowId::new(1, 1);
         let space1_windows: Vec<_> = reactor
             .layout
-            .calculate_layout(space1, screen1, &reactor.config)
+            .calculate_layout(space1, screen1, &reactor.config, Instant::now())
             .into_iter()
             .map(|(wid, _)| wid)
             .collect();
         assert!(space1_windows.contains(&dragged));
-        assert!(reactor.layout.calculate_layout(space2, screen2, &reactor.config).is_empty());
+        assert!(
+            reactor
+                .layout
+                .calculate_layout(space2, screen2, &reactor.config, Instant::now())
+                .is_empty()
+        );
 
         // Drag window 1 onto screen2, keeping its size the same so this is a
         // pure move (not a resize). The mouse button is still down.
@@ -2291,13 +2325,13 @@ pub mod tests {
         // The window now belongs to space2's layout and has left space1.
         let space1_windows: Vec<_> = reactor
             .layout
-            .calculate_layout(space1, screen1, &reactor.config)
+            .calculate_layout(space1, screen1, &reactor.config, Instant::now())
             .into_iter()
             .map(|(wid, _)| wid)
             .collect();
         let space2_windows: Vec<_> = reactor
             .layout
-            .calculate_layout(space2, screen2, &reactor.config)
+            .calculate_layout(space2, screen2, &reactor.config, Instant::now())
             .into_iter()
             .map(|(wid, _)| wid)
             .collect();
@@ -2360,12 +2394,17 @@ pub mod tests {
         // The window stays on space1 and space2 remains empty.
         let space1_windows: Vec<_> = reactor
             .layout
-            .calculate_layout(space1, screen1, &reactor.config)
+            .calculate_layout(space1, screen1, &reactor.config, Instant::now())
             .into_iter()
             .map(|(wid, _)| wid)
             .collect();
         assert!(space1_windows.contains(&dragged));
-        assert!(reactor.layout.calculate_layout(space2, screen2, &reactor.config).is_empty());
+        assert!(
+            reactor
+                .layout
+                .calculate_layout(space2, screen2, &reactor.config, Instant::now())
+                .is_empty()
+        );
 
         // No frames are written while the mouse button is still down.
         assert!(
@@ -2713,14 +2752,20 @@ pub mod tests {
         reactor.handle_event(Event::StartupComplete);
         reactor.handle_event(Event::ApplicationGloballyActivated(1));
         apps.simulate_until_quiet(&mut reactor);
-        let default = reactor.layout.calculate_layout(space, full_screen, &reactor.config);
+        let default =
+            reactor
+                .layout
+                .calculate_layout(space, full_screen, &reactor.config, Instant::now());
 
         assert!(reactor.layout.selected_window(space).is_some());
         reactor.handle_event(Event::Command(Command::Layout(LayoutCommand::MoveNode(
             Direction::Up,
         ))));
         apps.simulate_until_quiet(&mut reactor);
-        let modified = reactor.layout.calculate_layout(space, full_screen, &reactor.config);
+        let modified =
+            reactor
+                .layout
+                .calculate_layout(space, full_screen, &reactor.config, Instant::now());
         assert_ne!(default, modified);
 
         reactor.handle_event(Event::ScreenParametersChanged {
@@ -2774,7 +2819,9 @@ pub mod tests {
         apps.simulate_until_quiet(&mut reactor);
 
         assert_eq!(
-            reactor.layout.calculate_layout(space, full_screen, &reactor.config),
+            reactor
+                .layout
+                .calculate_layout(space, full_screen, &reactor.config, Instant::now()),
             modified
         );
     }
@@ -2984,7 +3031,10 @@ pub mod tests {
         apps.simulate_until_quiet(&mut reactor1);
 
         // Verify all 5 windows are in the layout
-        let layout_before = reactor1.layout.calculate_layout(space, full_screen, &reactor1.config);
+        let layout_before =
+            reactor1
+                .layout
+                .calculate_layout(space, full_screen, &reactor1.config, Instant::now());
         assert_eq!(layout_before.len(), 5, "Expected 5 windows before shutdown");
 
         // Serialize the layout to simulate saving state before shutdown
@@ -3009,7 +3059,9 @@ pub mod tests {
 
         // Before StartupComplete, the layout still contains ghost nodes for app 2's windows
         let layout_before_cleanup =
-            reactor2.layout.calculate_layout(space, full_screen, &reactor2.config);
+            reactor2
+                .layout
+                .calculate_layout(space, full_screen, &reactor2.config, Instant::now());
         assert_eq!(layout_before_cleanup.len(), 5);
 
         // Send StartupComplete to trigger cleanup of terminated app windows
@@ -3019,7 +3071,7 @@ pub mod tests {
         // but windows from running apps 1 and 3 remain
         let windows_after = reactor2
             .layout
-            .calculate_layout(space, full_screen, &reactor2.config)
+            .calculate_layout(space, full_screen, &reactor2.config, Instant::now())
             .into_iter()
             .map(|(wid, _)| wid)
             .sorted()
@@ -3054,7 +3106,7 @@ pub mod tests {
         apps.simulate_until_quiet(&mut reactor);
 
         assert!(
-            !reactor.layout.has_active_scroll_animation(),
+            !reactor.layout.has_active_scroll_animation(Instant::now()),
             "timer should be dormant when no scroll animation is active"
         );
     }
