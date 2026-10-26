@@ -15,7 +15,7 @@ actor → sys
 
 Thin wrappers around macOS system APIs. No business logic. This includes accessibility (`AXObserver`, `AXUIElement`), window server (`CGWindowListCopyWindowInfo`, private SkyLight framework), screens and spaces, the event tap, CFRunLoop-based timers, and a single-threaded async executor that integrates futures with `CFRunLoop`.
 
-Types defined here, like `SpaceId`, `WindowServerId`, and `CGRect`, are used throughout the codebase.
+Types defined here, like `SpaceId`, `WindowId`, `WindowServerId`, and `CGRect`, are used throughout the codebase.
 
 ### model
 

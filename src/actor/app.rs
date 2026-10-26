@@ -15,7 +15,6 @@
 
 use std::cell::{RefCell, RefMut};
 use std::fmt::Debug;
-use std::num::NonZeroU32;
 use std::sync::LazyLock;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -44,57 +43,13 @@ use tracing::{Instrument, Span, debug, error, info, info_span, instrument, trace
 use crate::actor::reactor::{Event, Requested, TransactionId};
 use crate::actor::{window_server, wm_controller};
 use crate::collections::{HashMap, HashSet};
-use crate::sys::app::{AXUIElementExt, NSRunningApplicationExt, ProcessInfo};
-pub use crate::sys::app::{AppInfo, WindowInfo, pid_t};
+use crate::sys::app::{AXUIElementExt, NSRunningApplicationExt, ProcessInfo, pid_t};
+pub use crate::sys::app::{AppInfo, WindowInfo};
 use crate::sys::event;
 use crate::sys::executor::Executor;
 use crate::sys::geometry::SameAs;
 use crate::sys::observer::Observer;
-use crate::sys::window_server::WindowServerId;
-
-/// An identifier representing a window.
-///
-/// This identifier is only valid for the lifetime of the process that owns it.
-/// It is not stable across restarts of the window manager.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub struct WindowId {
-    pub pid: pid_t,
-    idx: NonZeroU32,
-}
-
-const MANUAL_INDEX_MASK: u32 = 0x8000_0000;
-
-impl WindowId {
-    #[cfg(test)]
-    pub(crate) fn new(pid: pid_t, idx: u32) -> WindowId {
-        Self::with_manual_index(pid, idx)
-    }
-
-    fn with_manual_index(pid: pid_t, idx: u32) -> WindowId {
-        assert!(idx & MANUAL_INDEX_MASK == 0, "Window index out of range");
-        WindowId {
-            pid,
-            idx: NonZeroU32::new(MANUAL_INDEX_MASK | idx).unwrap(),
-        }
-    }
-
-    /// Returns `None` if the window server id is 0 (kCGNullWindowID).
-    pub fn with_wsid(pid: pid_t, wsid: WindowServerId) -> Option<Self> {
-        assert!(wsid.0 & MANUAL_INDEX_MASK == 0, "WindowServerId out of range");
-        Some(WindowId {
-            pid,
-            idx: NonZeroU32::new(wsid.0)?,
-        })
-    }
-
-    pub fn wsid(&self) -> Option<WindowServerId> {
-        if self.idx.get() & MANUAL_INDEX_MASK != 0 {
-            None
-        } else {
-            Some(WindowServerId(self.idx.get()))
-        }
-    }
-}
+use crate::sys::window_server::{WindowId, WindowServerId};
 
 #[derive(Clone)]
 pub struct AppThreadHandle {
@@ -1215,9 +1170,8 @@ impl State {
 
     fn id(&self, elem: &AXUIElement) -> Result<WindowId, accessibility::Error> {
         if let Ok(id) = WindowServerId::try_from(elem)
-            && let Some(idx) = NonZeroU32::new(id.as_u32())
+            && let Some(wid) = WindowId::with_wsid(self.pid, id)
         {
-            let wid = WindowId { pid: self.pid, idx };
             if self.windows.contains_key(&wid) {
                 return Ok(wid);
             }

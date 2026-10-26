@@ -9,15 +9,15 @@ use std::time::Duration;
 use objc2::MainThreadMarker;
 use tracing::{debug, instrument, warn};
 
-pub use crate::actor::app::pid_t;
-use crate::actor::app::{self, AppInfo, AppThreadHandle, Quiet, WindowId, WindowInfo};
+use crate::actor::app::{self, AppInfo, AppThreadHandle, Quiet, WindowInfo};
 use crate::actor::{self, reactor, space_manager, wm_controller};
 use crate::collections::HashMap;
+pub use crate::sys::app::pid_t;
 use crate::sys::event::MouseState;
 use crate::sys::screen::{self, NSScreenInfo, ScreenCache, ScreenInfo, SpaceId};
 use crate::sys::window_server::{
-    self as sys_ws, SkylightConnection, SkylightNotifier, WindowServerId, WindowsOnScreen,
-    kCGSWindowIsTerminated,
+    self as sys_ws, SkylightConnection, SkylightNotifier, WindowId, WindowServerId,
+    WindowsOnScreen, kCGSWindowIsTerminated,
 };
 
 /// CGWindowLevel values for windows we care about. Everything else (e.g.

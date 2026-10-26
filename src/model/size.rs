@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 use super::layout_tree::TreeEvent;
 use super::selection::Selection;
 use super::tree::{NodeId, NodeMap};
-use crate::actor::app::WindowId;
 use crate::config::Config;
 use crate::sys::geometry::{CGRectExt, Round};
+use crate::sys::window_server::WindowId;
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Size {

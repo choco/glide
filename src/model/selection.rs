@@ -126,10 +126,10 @@ impl Selection {
 
 #[cfg(test)]
 mod tests {
-    use crate::actor::app::WindowId;
     use crate::model::Direction;
     use crate::model::layout_tree::LayoutTree;
     use crate::model::size::ContainerKind;
+    use crate::sys::window_server::WindowId;
 
     #[test]
     fn it_moves_as_nodes_are_added_and_removed() {

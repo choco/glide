@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use super::Event;
-use crate::actor::app::{Quiet, WindowId, pid_t};
+use crate::actor::app::Quiet;
 use crate::collections::HashMap;
+use crate::sys::app::pid_t;
+use crate::sys::window_server::WindowId;
 
 /// Keeps track of the main window.
 #[derive(Default)]

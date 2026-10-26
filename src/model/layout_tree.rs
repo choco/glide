@@ -11,9 +11,10 @@ use super::selection::Selection;
 use super::size::{ContainerKind, Direction, Orientation, Size};
 use super::tree::{self, Tree};
 use super::window::Window;
-use crate::actor::app::{WindowId, pid_t};
 use crate::config::Config;
 use crate::model::tree::{NodeId, NodeMap, OwnedNode};
+use crate::sys::app::pid_t;
+use crate::sys::window_server::WindowId;
 
 /// The layout tree.
 ///
@@ -1089,8 +1090,8 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::actor::app::pid_t;
     use crate::model::LayoutTree;
+    use crate::sys::app::pid_t;
 
     fn w(pid: pid_t, idx: u32) -> WindowId {
         WindowId::new(pid, idx)

@@ -3,14 +3,14 @@
 
 use std::collections::BTreeMap;
 
-use accessibility_sys::pid_t;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use super::tree::{NodeId, NodeMap};
-use crate::actor::app::WindowId;
 use crate::collections::BTreeExt;
 use crate::model::layout_tree::{LayoutId, TreeEvent};
+use crate::sys::app::pid_t;
+use crate::sys::window_server::WindowId;
 
 /// Maintains a two-way mapping between leaf nodes and window ids.
 ///

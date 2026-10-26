@@ -11,13 +11,13 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::{Span, debug, info};
 
 use super::{Event, Reactor, Record, Requested, TransactionId, animation};
-use crate::actor::app::{AppThreadHandle, Request, WindowId};
+use crate::actor::app::{AppThreadHandle, Request};
 use crate::actor::layout::LayoutManager;
 use crate::actor::reactor;
 use crate::config::Config;
 use crate::sys::app::{AppInfo, WindowInfo};
 use crate::sys::geometry::SameAs;
-use crate::sys::window_server::{WindowServerId, WindowServerInfo, WindowsOnScreen};
+use crate::sys::window_server::{WindowId, WindowServerId, WindowServerInfo, WindowsOnScreen};
 
 impl Reactor {
     pub fn new_for_test(layout: LayoutManager) -> Reactor {

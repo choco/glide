@@ -3,6 +3,7 @@
 
 use std::ffi::{c_int, c_void};
 use std::marker::PhantomData;
+use std::num::NonZeroU32;
 use std::ptr;
 
 use accessibility::AXUIElement;
@@ -43,6 +44,52 @@ impl WindowServerId {
 
     pub fn as_u32(&self) -> u32 {
         self.0
+    }
+}
+
+/// An identifier representing a window.
+///
+/// This identifier is only valid for the lifetime of the process that owns it.
+/// It is not stable across restarts of the window manager.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub struct WindowId {
+    pub pid: pid_t,
+    idx: NonZeroU32,
+}
+
+const MANUAL_INDEX_MASK: u32 = 0x8000_0000;
+
+impl WindowId {
+    #[cfg(test)]
+    pub(crate) fn new(pid: pid_t, idx: u32) -> WindowId {
+        Self::with_manual_index(pid, idx)
+    }
+
+    /// Makes an id for a window that has no window server id, using an index
+    /// assigned by the app actor.
+    pub(crate) fn with_manual_index(pid: pid_t, idx: u32) -> WindowId {
+        assert!(idx & MANUAL_INDEX_MASK == 0, "Window index out of range");
+        WindowId {
+            pid,
+            idx: NonZeroU32::new(MANUAL_INDEX_MASK | idx).unwrap(),
+        }
+    }
+
+    /// Returns `None` if the window server id is 0 (kCGNullWindowID).
+    pub fn with_wsid(pid: pid_t, wsid: WindowServerId) -> Option<Self> {
+        assert!(wsid.0 & MANUAL_INDEX_MASK == 0, "WindowServerId out of range");
+        Some(WindowId {
+            pid,
+            idx: NonZeroU32::new(wsid.0)?,
+        })
+    }
+
+    pub fn wsid(&self) -> Option<WindowServerId> {
+        if self.idx.get() & MANUAL_INDEX_MASK != 0 {
+            None
+        } else {
+            Some(WindowServerId(self.idx.get()))
+        }
     }
 }
 
