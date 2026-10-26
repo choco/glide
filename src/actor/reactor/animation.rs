@@ -7,8 +7,9 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use tokio::sync::mpsc;
 
 use super::TransactionId;
-use crate::actor::app::{AppThreadHandle, Request, WindowId};
+use crate::actor::app::{AppThreadHandle, Request};
 use crate::sys::timer::Timer;
+use crate::sys::window_server::WindowId;
 
 pub type Sender = mpsc::UnboundedSender<Message>;
 pub type Receiver = mpsc::UnboundedReceiver<Message>;

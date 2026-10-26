@@ -14,7 +14,6 @@ use redact::Secret;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, warn};
 
-use crate::actor::app::{WindowId, pid_t};
 use crate::collections::{BTreeExt, BTreeSet, HashMap, HashSet};
 use crate::config::{Config, NewWindowPlacement, ScrollConfig, WindowRule, WindowRuleConditions};
 use crate::model::scroll_viewport::ViewportState;
@@ -22,8 +21,10 @@ use crate::model::{
     ContainerKind, Direction, LayoutId, LayoutKind, LayoutTree, NodeId, Orientation,
     SpaceLayoutMapping,
 };
+use crate::sys::app::pid_t;
 use crate::sys::geometry::{CGRectDef, CGRectExt, CGSizeExt};
 use crate::sys::screen::SpaceId;
+use crate::sys::window_server::WindowId;
 
 #[allow(dead_code)]
 #[derive(Serialize, Deserialize, Debug, Clone)]

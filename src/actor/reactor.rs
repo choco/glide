@@ -34,7 +34,7 @@ use tokio::sync::mpsc;
 use tracing::{Span, debug, error, info, instrument, trace, warn};
 
 use super::mouse;
-use crate::actor::app::{AppInfo, AppThreadHandle, Quiet, Request, WindowId, WindowInfo, pid_t};
+use crate::actor::app::{AppInfo, AppThreadHandle, Quiet, Request, WindowInfo};
 use crate::actor::layout::{self, LayoutCommand, LayoutEvent, LayoutManager, LayoutWindowInfo};
 use crate::actor::raise::{self, RaiseManager, RaiseRequest};
 use crate::actor::space_manager::{SpaceManager, SpaceState};
@@ -42,12 +42,13 @@ use crate::actor::{group_bars, space_manager, status, window_server, wm_controll
 use crate::collections::{HashMap, HashSet};
 use crate::config::Config;
 use crate::log::{self, MetricsCommand};
+use crate::sys::app::pid_t;
 use crate::sys::event::MouseState;
 use crate::sys::executor::Executor;
 use crate::sys::geometry::{CGRectDef, CGRectExt, SameAs, round_to_physical};
 use crate::sys::screen::{CoordinateConverter, SpaceId};
 use crate::sys::timer::Timer;
-use crate::sys::window_server::{WindowServerId, WindowServerInfo, WindowsOnScreen};
+use crate::sys::window_server::{WindowId, WindowServerId, WindowServerInfo, WindowsOnScreen};
 
 pub type Sender = crate::actor::Sender<Event>;
 pub type Receiver = crate::actor::Receiver<Event>;

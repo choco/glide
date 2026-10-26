@@ -16,9 +16,10 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Span, debug, trace, warn};
 
-use crate::actor::app::{AppThreadHandle, Quiet, Request, WindowId};
+use crate::actor::app::{AppThreadHandle, Quiet, Request};
 use crate::actor::{mouse, reactor};
 use crate::sys::timer::Timer;
+use crate::sys::window_server::WindowId;
 
 /// Messages that can be sent to the raise manager
 #[derive(Debug)]
@@ -361,8 +362,9 @@ mod tests {
 
     use super::*;
     use crate::actor;
-    use crate::actor::app::{AppThreadHandle, WindowId};
+    use crate::actor::app::AppThreadHandle;
     use crate::sys::executor::Executor;
+    use crate::sys::window_server::WindowId;
 
     fn create_test_app_handles() -> (
         HashMap<i32, AppThreadHandle>,

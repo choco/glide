@@ -9,8 +9,8 @@ pub(crate) use std::collections::{BTreeMap, BTreeSet, hash_map};
 // We also don't need cryptographic hashing, and these are faster.
 pub(crate) use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-use crate::actor::app::WindowId;
 use crate::sys::app::pid_t;
+use crate::sys::window_server::WindowId;
 
 pub trait BTreeExt {
     fn remove_all_for_pid(&mut self, pid: pid_t) -> Self;
