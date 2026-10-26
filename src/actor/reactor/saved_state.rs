@@ -108,7 +108,7 @@ pub fn restore_legacy_layout(
     match boot_time {
         Some(boot_time) if modified > boot_time => {
             info!("Restoring layout saved by an older version");
-            LayoutManager::load(path.to_owned(), config)
+            load_legacy_layout(path, config)
                 .map(Some)
                 .with_context(|| format!("Could not restore layout saved in {}", path.display()))
         }
@@ -117,6 +117,12 @@ pub fn restore_legacy_layout(
             Ok(None)
         }
     }
+}
+
+fn load_legacy_layout(path: &Path, config: Arc<Config>) -> anyhow::Result<LayoutManager> {
+    let serialized = fs::read_to_string(path)?;
+    let layout: LayoutManager = ron::from_str(&serialized)?;
+    Ok(layout.with_restored_config(config))
 }
 
 /// Replace the contents of `path` such that a crash at any point leaves either
@@ -238,6 +244,11 @@ mod tests {
         Arc::new(Config::default())
     }
 
+    fn save_legacy_layout(path: &Path) {
+        let layout = LayoutManager::new_for_test();
+        fs::write(path, ron::ser::to_string(&layout).unwrap()).unwrap();
+    }
+
     fn save_in_session(path: &Path, session: &str) {
         let state = SavedState {
             version: "0.0.0".to_owned(),
@@ -304,7 +315,7 @@ mod tests {
     fn legacy_layout_saved_this_boot_is_restored() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("layout.ron");
-        LayoutManager::new_for_test().save(path.clone()).unwrap();
+        save_legacy_layout(&path);
         let boot = SystemTime::UNIX_EPOCH;
 
         assert!(restore_legacy_layout(&path, Some(boot), config()).unwrap().is_some());
@@ -314,7 +325,7 @@ mod tests {
     fn legacy_layout_saved_before_boot_is_not_restored() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("layout.ron");
-        LayoutManager::new_for_test().save(path.clone()).unwrap();
+        save_legacy_layout(&path);
         let boot = SystemTime::now() + std::time::Duration::from_secs(60);
 
         assert!(restore_legacy_layout(&path, Some(boot), config()).unwrap().is_none());
@@ -324,7 +335,7 @@ mod tests {
     fn legacy_layout_is_not_restored_without_boot_time() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("layout.ron");
-        LayoutManager::new_for_test().save(path.clone()).unwrap();
+        save_legacy_layout(&path);
 
         assert!(restore_legacy_layout(&path, None, config()).unwrap().is_none());
     }

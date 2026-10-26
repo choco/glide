@@ -3,9 +3,6 @@
 
 //! Defines the [`LayoutManager`] actor.
 
-use std::fs::{self, File};
-use std::io::{Read, Write};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -1656,27 +1653,12 @@ impl LayoutManager {
         self.tree.visible_windows_under(self.tree.root(layout))
     }
 
-    pub fn load(path: PathBuf, config: Arc<Config>) -> anyhow::Result<Self> {
-        let mut buf = String::new();
-        File::open(path)?.read_to_string(&mut buf)?;
-        let manager: Self = ron::from_str(&buf)?;
-        Ok(manager.with_restored_config(config))
-    }
-
     /// Attach the config to a deserialized layout.
     pub fn with_restored_config(mut self, config: Arc<Config>) -> Self {
         // Only the field, not `set_config`: the caller applies the config, and
         // `set_config` also converts layouts the config no longer allows.
         self.config = config;
         self
-    }
-
-    pub fn save(&self, path: PathBuf) -> std::io::Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        File::create(path)?.write_all(self.serialize_to_string().as_bytes())?;
-        Ok(())
     }
 
     /// A counter that changes whenever the serialized state may have changed.
