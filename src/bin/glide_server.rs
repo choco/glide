@@ -232,35 +232,23 @@ fn saver(opt: &Cli) -> Option<Saver> {
 }
 
 fn restore(opt: &Cli, config: &Arc<Config>) -> (LayoutManager, Option<SpaceState>) {
-    let state_path = saved_state_file();
-    // Layouts saved by older versions don't record the login session that
-    // saved them, so only restore one when asked to. Otherwise set it aside so
-    // it can't be restored later.
-    let legacy_layout = if opt.restore() == Some(true) {
-        saved_state::take_legacy_layout(&restore_file(), boot_time(), config.clone())
-            .unwrap_or_else(|e| {
-                error!("{e:#}");
-                None
-            })
-    } else {
-        if let Err(e) = saved_state::discard(&restore_file()) {
-            error!("Could not discard {}: {e}", restore_file().display());
-        }
-        None
-    };
     if !opt.restore().unwrap_or(config.settings.auto_restore) {
-        if let Err(e) = saved_state::discard(&state_path) {
-            error!("Could not discard {}: {e}", state_path.display());
-        }
         return (LayoutManager::new(config.clone()), None);
     }
-    match SavedState::take(&state_path, LoginSessionId::current().as_ref(), config.clone()) {
+    let session = LoginSessionId::current();
+    match SavedState::restore(&saved_state_file(), session.as_ref(), config.clone()) {
         Ok(Some(state)) => return (state.layout, Some(state.spaces)),
         Ok(None) => {}
         Err(e) => error!("{e:#}"),
     }
-    if let Some(layout) = legacy_layout {
-        return (layout, None);
+    // Layouts saved by older versions don't record the login session that
+    // saved them, so only restore one when asked to.
+    if opt.restore() == Some(true) {
+        match saved_state::restore_legacy_layout(&restore_file(), boot_time(), config.clone()) {
+            Ok(Some(layout)) => return (layout, None),
+            Ok(None) => {}
+            Err(e) => error!("{e:#}"),
+        }
     }
     (LayoutManager::new(config.clone()), None)
 }

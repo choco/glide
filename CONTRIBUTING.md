@@ -90,7 +90,8 @@ cargo run --release -- --restore
 ```
 
 Glide also saves its state as it changes. To keep a development build from
-overwriting your saved state, pass `--no-save` (implied by `--one`).
+overwriting your saved state, pass `--no-save` (implied by `--one`). It still
+restores your saved state unless you also pass `--no-restore`.
 
 ### Building an app bundle
 
