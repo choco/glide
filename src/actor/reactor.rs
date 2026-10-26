@@ -481,6 +481,20 @@ impl Reactor {
     }
 
     fn handle_event(&mut self, event: Event) {
+        // Code that depends on the layout generation needs it to change
+        // whenever the serialized layout does. Check that here so tests catch
+        // any mutation path that forgets to update it.
+        #[cfg(test)]
+        let before = (self.layout.generation(), self.layout.serialize_to_string());
+        self.handle_event_inner(event);
+        #[cfg(test)]
+        assert!(
+            self.layout.generation() != before.0 || self.layout.serialize_to_string() == before.1,
+            "layout changed without changing its generation"
+        );
+    }
+
+    fn handle_event_inner(&mut self, event: Event) {
         self.record.on_event(&event);
         self.log_event(&event);
         let mut animation_focus_wids: Vec<WindowId> = Vec::new();
