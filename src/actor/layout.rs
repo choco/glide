@@ -537,11 +537,15 @@ impl LayoutManager {
             LayoutEvent::SpaceExposed(space, size) => {
                 self.debug_tree(space);
                 let kind = self.default_layout_kind;
+                let orientation = if size.height > size.width {
+                    Orientation::Vertical
+                } else {
+                    Orientation::Horizontal
+                };
                 {
-                    let mapping = self
-                        .layout_mapping
-                        .entry(space)
-                        .or_insert_with(|| SpaceLayoutMapping::new(size, &mut self.tree, kind));
+                    let mapping = self.layout_mapping.entry(space).or_insert_with(|| {
+                        SpaceLayoutMapping::new(size, &mut self.tree, kind, orientation)
+                    });
                     mapping.activate_size(size, &mut self.tree);
                 }
                 self.ensure_layout_kind_allowed_for_space(space);
@@ -2980,6 +2984,48 @@ mod tests {
             vec![
                 (WindowId::new(pid, 1), rect(0, 0, 50, 100)),
                 (WindowId::new(pid, 2), rect(50, 0, 50, 100)),
+            ],
+            mgr.layout_sorted(space, screen),
+        );
+    }
+
+    #[test]
+    fn it_arranges_windows_vertically_on_a_portrait_screen() {
+        use LayoutEvent::*;
+        let mut mgr = LayoutManager::new_for_test();
+        let space = SpaceId::new(1);
+        let pid = 1;
+        let windows = make_windows(pid, 2);
+
+        let screen = rect(0, 0, 100, 300);
+        _ = mgr.handle_event(SpaceExposed(space, screen.size));
+        _ = mgr.handle_event(WindowsOnScreenUpdated(space, pid, windows));
+
+        assert_eq!(
+            vec![
+                (WindowId::new(pid, 1), rect(0, 0, 100, 150)),
+                (WindowId::new(pid, 2), rect(0, 150, 100, 150)),
+            ],
+            mgr.layout_sorted(space, screen),
+        );
+    }
+
+    #[test]
+    fn it_arranges_windows_horizontally_on_a_landscape_screen() {
+        use LayoutEvent::*;
+        let mut mgr = LayoutManager::new_for_test();
+        let space = SpaceId::new(1);
+        let pid = 1;
+        let windows = make_windows(pid, 2);
+
+        let screen = rect(0, 0, 300, 100);
+        _ = mgr.handle_event(SpaceExposed(space, screen.size));
+        _ = mgr.handle_event(WindowsOnScreenUpdated(space, pid, windows));
+
+        assert_eq!(
+            vec![
+                (WindowId::new(pid, 1), rect(0, 0, 150, 100)),
+                (WindowId::new(pid, 2), rect(150, 0, 150, 100)),
             ],
             mgr.layout_sorted(space, screen),
         );
