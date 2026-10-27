@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.2.17](https://github.com/tmandry/glide/compare/v0.2.16...v0.2.17) (2026-10-27)
+
+This release makes your workspace more resilient by saving layout changes as
+they happen. It also adds easier resizing controls and improves layouts on
+portrait displays.
+
+### Features
+
+* Glide now saves your layout and enabled Spaces as they change, so they can be
+  restored after a crash or forced quit during the same login session
+  ([3a227c4](https://github.com/tmandry/glide/commit/3a227c4d99b6919ddac857c539e94bdca48c2696)).
+* Press **Alt+Ctrl+0** to divide every container on the current Space evenly,
+  undoing any manual resizing ([#238](https://github.com/tmandry/glide/pull/238)).
+* Press **Alt+Ctrl+=** or **Alt+Ctrl+-** to grow or shrink the focused window
+  along its container's axis. The same two keys work in rows, columns, and
+  tabbed or stacked groups ([#239](https://github.com/tmandry/glide/pull/239)).
+* New layouts now adapt to the display: windows sit side by side on landscape
+  displays and stack vertically on portrait displays
+  ([#242](https://github.com/tmandry/glide/pull/242)).
+
+### Bug Fixes
+
+* Leave native macOS fullscreen Spaces unmanaged, so other windows opened there
+  float instead of becoming hidden in a layout behind the fullscreen window
+  ([#257](https://github.com/tmandry/glide/pull/257)).
+* Remove a leftover group bar after the last window on a Space closes, while
+  preserving the Space's portrait or landscape orientation
+  ([#258](https://github.com/tmandry/glide/pull/258),
+  [08468f7](https://github.com/tmandry/glide/commit/08468f7b070a97a27b8154836bb1ed1dc61b2655)).
+* Avoid creating and observing Glide's own windows when group bars are disabled
+  ([#254](https://github.com/tmandry/glide/pull/254)).
+
 ## [0.2.16](https://github.com/tmandry/glide/compare/v0.2.15...v0.2.16) (2026-09-28)
 
 This release makes it easier to restart and update Glide without losing your
