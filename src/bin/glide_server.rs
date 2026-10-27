@@ -5,7 +5,7 @@ use std::backtrace::Backtrace;
 use std::fs::File;
 use std::io::Write;
 use std::panic::PanicHookInfo;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::Parser;
@@ -14,7 +14,7 @@ use glide_wm::actor::group_bars::GroupBars;
 use glide_wm::actor::layout::LayoutManager;
 use glide_wm::actor::mouse::Mouse;
 use glide_wm::actor::notification_center::NotificationCenter;
-use glide_wm::actor::reactor::saved_state::{self, SavedState, Saver};
+use glide_wm::actor::reactor::saved_state::{self, AfterRestore, SavedState, Saver};
 use glide_wm::actor::reactor::{self, Reactor};
 use glide_wm::actor::server::MessageServer;
 use glide_wm::actor::space_manager::SpaceState;
@@ -69,7 +69,8 @@ struct Cli {
     #[arg(long, overrides_with = "restore")]
     no_restore: bool,
 
-    /// Don't save the layout or enabled spaces, even on save_and_exit.
+    /// Don't save the layout or enabled spaces, even on save_and_exit. Saved
+    /// state can still be restored, but is left in place for the next launch.
     #[arg(long)]
     no_save: bool,
 
@@ -218,10 +219,14 @@ impl Cli {
             _ => None,
         }
     }
+
+    fn save(&self) -> bool {
+        !self.no_save && !self.one
+    }
 }
 
 fn saver(opt: &Cli) -> Option<Saver> {
-    if opt.no_save || opt.one {
+    if !opt.save() {
         return None;
     }
     let Some(session) = LoginSessionId::current() else {
@@ -232,23 +237,45 @@ fn saver(opt: &Cli) -> Option<Saver> {
 }
 
 fn restore(opt: &Cli, config: &Arc<Config>) -> (LayoutManager, Option<SpaceState>) {
+    let state_path = saved_state_file();
+    // Saved state is only consumed by an instance that will save its own.
+    let after = if opt.save() {
+        AfterRestore::MoveAside
+    } else {
+        AfterRestore::Keep
+    };
+    let discard = |path: &Path| {
+        if after == AfterRestore::MoveAside
+            && let Err(e) = saved_state::discard(path)
+        {
+            error!("Could not discard {}: {e}", path.display());
+        }
+    };
+    // Layouts saved by older versions don't record the login session that
+    // saved them, so only restore one when asked to. Otherwise set it aside so
+    // it can't be restored later.
+    let legacy_layout = if opt.restore() == Some(true) {
+        saved_state::restore_legacy_layout(&restore_file(), boot_time(), config.clone(), after)
+            .unwrap_or_else(|e| {
+                error!("{e:#}");
+                None
+            })
+    } else {
+        discard(&restore_file());
+        None
+    };
     if !opt.restore().unwrap_or(config.settings.auto_restore) {
+        discard(&state_path);
         return (LayoutManager::new(config.clone()), None);
     }
     let session = LoginSessionId::current();
-    match SavedState::restore(&saved_state_file(), session.as_ref(), config.clone()) {
+    match SavedState::restore(&state_path, session.as_ref(), config.clone(), after) {
         Ok(Some(state)) => return (state.layout, Some(state.spaces)),
         Ok(None) => {}
         Err(e) => error!("{e:#}"),
     }
-    // Layouts saved by older versions don't record the login session that
-    // saved them, so only restore one when asked to.
-    if opt.restore() == Some(true) {
-        match saved_state::restore_legacy_layout(&restore_file(), boot_time(), config.clone()) {
-            Ok(Some(layout)) => return (layout, None),
-            Ok(None) => {}
-            Err(e) => error!("{e:#}"),
-        }
+    if let Some(layout) = legacy_layout {
+        return (layout, None);
     }
     (LayoutManager::new(config.clone()), None)
 }

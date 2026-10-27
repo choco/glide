@@ -35,6 +35,16 @@ pub struct SavedState<L = LayoutManager> {
     pub layout: L,
 }
 
+/// What restoring does with a saved state file once it has read it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AfterRestore {
+    /// Move the file aside, even if it can't be restored, so it is only ever
+    /// restored once.
+    MoveAside,
+    /// Leave the file in place, for an instance that won't save over it.
+    Keep,
+}
+
 impl SavedState {
     fn serialize(
         layout: &LayoutManager,
@@ -57,10 +67,13 @@ impl SavedState {
     }
 
     /// Restore the state saved at `path` if it was saved in `session`.
+    ///
+    /// If `session` is unknown, the file is left for a later launch to check.
     pub fn restore(
         path: &Path,
         session: Option<&LoginSessionId>,
         config: Arc<Config>,
+        after: AfterRestore,
     ) -> anyhow::Result<Option<Self>> {
         let Some(session) = session else {
             info!("Not restoring state because the login session is unknown");
@@ -71,6 +84,9 @@ impl SavedState {
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.into()),
         };
+        if after == AfterRestore::MoveAside {
+            discard(path)?;
+        }
         let state = Self::parse(&serialized, config)
             .with_context(|| format!("Could not restore state saved in {}", path.display()))?;
         if state.session.as_ref() != Some(session) {
@@ -99,13 +115,14 @@ pub fn restore_legacy_layout(
     path: &Path,
     boot_time: Option<SystemTime>,
     config: Arc<Config>,
+    after: AfterRestore,
 ) -> anyhow::Result<Option<LayoutManager>> {
     let modified = match fs::metadata(path).and_then(|m| m.modified()) {
         Ok(modified) => modified,
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.into()),
     };
-    match boot_time {
+    let result = match boot_time {
         Some(boot_time) if modified > boot_time => {
             info!("Restoring layout saved by an older version");
             load_legacy_layout(path, config)
@@ -116,7 +133,11 @@ pub fn restore_legacy_layout(
             info!("Not restoring layout saved by an older version before this boot");
             Ok(None)
         }
+    };
+    if after == AfterRestore::MoveAside {
+        discard(path)?;
     }
+    result
 }
 
 fn load_legacy_layout(path: &Path, config: Arc<Config>) -> anyhow::Result<LayoutManager> {
@@ -223,12 +244,25 @@ impl Saver {
     }
 }
 
+/// Move the state saved at `path` aside so it is not restored.
+pub fn discard(path: &Path) -> io::Result<()> {
+    match fs::rename(path, previous_path(path)) {
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        res => res,
+    }
+}
+
+fn previous_path(path: &Path) -> PathBuf {
+    path.with_extension("prev.ron")
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
 
     use tempfile::tempdir;
 
+    use super::AfterRestore::{Keep, MoveAside};
     use super::*;
     use crate::sys::screen::SpaceId;
 
@@ -260,26 +294,24 @@ mod tests {
     }
 
     #[test]
-    fn restores_state_from_the_same_session() {
+    fn restores_state_once() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("state.ron");
         save_in_session(&path, "a");
         let session = LoginSessionId::new_for_test("a");
 
-        let state = SavedState::restore(&path, Some(&session), config()).unwrap().unwrap();
+        let state = SavedState::restore(&path, Some(&session), config(), MoveAside)
+            .unwrap()
+            .unwrap();
         assert_eq!(state.spaces, spaces());
-    }
+        assert!(!path.exists());
+        assert!(previous_path(&path).exists());
 
-    #[test]
-    fn restoring_leaves_the_file_in_place() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("state.ron");
-        save_in_session(&path, "a");
-        let session = LoginSessionId::new_for_test("a");
-
-        SavedState::restore(&path, Some(&session), config()).unwrap().unwrap();
-        SavedState::restore(&path, Some(&session), config()).unwrap().unwrap();
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert!(
+            SavedState::restore(&path, Some(&session), config(), MoveAside)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -289,7 +321,8 @@ mod tests {
         save_in_session(&path, "a");
 
         let other = LoginSessionId::new_for_test("b");
-        assert!(SavedState::restore(&path, Some(&other), config()).unwrap().is_none());
+        assert!(SavedState::restore(&path, Some(&other), config(), MoveAside).unwrap().is_none());
+        assert!(!path.exists());
     }
 
     #[test]
@@ -298,27 +331,63 @@ mod tests {
         let path = dir.path().join("state.ron");
         save_in_session(&path, "a");
 
-        assert!(SavedState::restore(&path, None, config()).unwrap().is_none());
+        assert!(SavedState::restore(&path, None, config(), MoveAside).unwrap().is_none());
+        assert!(path.exists());
     }
 
     #[test]
-    fn invalid_state_is_an_error() {
+    fn moves_invalid_state_aside() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("state.ron");
         fs::write(&path, "not a saved state").unwrap();
         let session = LoginSessionId::new_for_test("a");
 
-        assert!(SavedState::restore(&path, Some(&session), config()).is_err());
+        assert!(SavedState::restore(&path, Some(&session), config(), MoveAside).is_err());
+        assert!(!path.exists());
+        assert!(
+            SavedState::restore(&path, Some(&session), config(), MoveAside)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
-    fn legacy_layout_saved_this_boot_is_restored() {
+    fn keep_leaves_state_in_place() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.ron");
+        save_in_session(&path, "a");
+        let session = LoginSessionId::new_for_test("a");
+
+        for _ in 0..2 {
+            let state = SavedState::restore(&path, Some(&session), config(), Keep).unwrap();
+            assert_eq!(state.unwrap().spaces, spaces());
+        }
+        assert!(!previous_path(&path).exists());
+    }
+
+    #[test]
+    fn legacy_layout_saved_this_boot_is_restored_once() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("layout.ron");
         save_legacy_layout(&path);
         let boot = SystemTime::UNIX_EPOCH;
 
-        assert!(restore_legacy_layout(&path, Some(boot), config()).unwrap().is_some());
+        assert!(restore_legacy_layout(&path, Some(boot), config(), MoveAside).unwrap().is_some());
+        assert!(!path.exists());
+        assert!(restore_legacy_layout(&path, Some(boot), config(), MoveAside).unwrap().is_none());
+    }
+
+    #[test]
+    fn keep_leaves_legacy_layout_in_place() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("layout.ron");
+        save_legacy_layout(&path);
+        let boot = SystemTime::UNIX_EPOCH;
+
+        for _ in 0..2 {
+            assert!(restore_legacy_layout(&path, Some(boot), config(), Keep).unwrap().is_some());
+        }
+        assert!(!previous_path(&path).exists());
     }
 
     #[test]
@@ -328,7 +397,8 @@ mod tests {
         save_legacy_layout(&path);
         let boot = SystemTime::now() + std::time::Duration::from_secs(60);
 
-        assert!(restore_legacy_layout(&path, Some(boot), config()).unwrap().is_none());
+        assert!(restore_legacy_layout(&path, Some(boot), config(), MoveAside).unwrap().is_none());
+        assert!(!path.exists());
     }
 
     #[test]
@@ -337,7 +407,7 @@ mod tests {
         let path = dir.path().join("layout.ron");
         save_legacy_layout(&path);
 
-        assert!(restore_legacy_layout(&path, None, config()).unwrap().is_none());
+        assert!(restore_legacy_layout(&path, None, config(), MoveAside).unwrap().is_none());
     }
 
     #[test]
@@ -363,7 +433,9 @@ mod tests {
         saver.save_if_changed(&LayoutManager::new_for_test(), &spaces());
         saver.finish().unwrap();
 
-        let state = SavedState::restore(&path, Some(&session), config()).unwrap().unwrap();
+        let state = SavedState::restore(&path, Some(&session), config(), MoveAside)
+            .unwrap()
+            .unwrap();
         assert_eq!(state.spaces, spaces());
     }
 
