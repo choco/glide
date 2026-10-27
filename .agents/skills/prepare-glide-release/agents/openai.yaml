@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prepare Glide Release"
+  short_description: "Polish the current release-please notes"
+  default_prompt: "Use $prepare-glide-release to check out the current release-please PR and make its release notes user-friendly."
