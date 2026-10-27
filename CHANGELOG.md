@@ -2,32 +2,35 @@
 
 ## [0.2.17](https://github.com/tmandry/glide/compare/v0.2.16...v0.2.17) (2026-10-27)
 
+This release makes your workspace more resilient by saving layout changes as
+they happen. It also adds easier resizing controls and improves layouts on
+portrait displays.
 
 ### Features
 
-* Add balance command to even out window sizes ([607580e](https://github.com/tmandry/glide/commit/607580e5b18159c2ea3c06817a1510cc9aa680d6))
-* Add balance command to even out window sizes ([7ef18ce](https://github.com/tmandry/glide/commit/7ef18ce9862e93af47b00b27a8e2310471ae6661))
-* Add default_root_orientation to split a portrait screen vertically ([0c4de50](https://github.com/tmandry/glide/commit/0c4de50b060184cd6c316531ccbadb48fc38649c))
-* Add default_root_orientation to split a portrait screen vertically ([4dc78ab](https://github.com/tmandry/glide/commit/4dc78abe0abe3495f3c7372b9bc2ebb8e59fa1bc))
-* Let resize pick the axis when no direction is given ([6091d98](https://github.com/tmandry/glide/commit/6091d9881ebde302b10feb4478a1d4e54e253683))
-* Save layout after every change ([f99e1ce](https://github.com/tmandry/glide/commit/f99e1ce34783878823d28dea465ac86a51250974))
-* Save the layout as it changes ([3a227c4](https://github.com/tmandry/glide/commit/3a227c4d99b6919ddac857c539e94bdca48c2696))
-
+* Glide now saves your layout and enabled Spaces as they change, so they can be
+  restored after a crash or forced quit during the same login session
+  ([3a227c4](https://github.com/tmandry/glide/commit/3a227c4d99b6919ddac857c539e94bdca48c2696)).
+* Press **Alt+Ctrl+0** to divide every container on the current Space evenly,
+  undoing any manual resizing ([#238](https://github.com/tmandry/glide/pull/238)).
+* Press **Alt+Ctrl+=** or **Alt+Ctrl+-** to grow or shrink the focused window
+  along its container's axis. The same two keys work in rows, columns, and
+  tabbed or stacked groups ([#239](https://github.com/tmandry/glide/pull/239)).
+* New layouts now adapt to the display: windows sit side by side on landscape
+  displays and stack vertically on portrait displays
+  ([#242](https://github.com/tmandry/glide/pull/242)).
 
 ### Bug Fixes
 
-* Don't manage native fullscreen spaces ([ef3b30f](https://github.com/tmandry/glide/commit/ef3b30f88445fe4b517eb4c60023011f6d3725dd))
-* Don't manage native fullscreen spaces ([08d8b2e](https://github.com/tmandry/glide/commit/08d8b2e0f4ee7aa5df73bec4887d6c56141086af))
-* Keep a space's root orientation when its last window closes ([08468f7](https://github.com/tmandry/glide/commit/08468f7b070a97a27b8154836bb1ed1dc61b2655))
-* Reset the layout of a space when its last window goes away ([ab4fcb8](https://github.com/tmandry/glide/commit/ab4fcb8396cb72524b7cb00bfe533e90e63aaba3))
-* Reset the layout of a space when its last window goes away ([7ba3089](https://github.com/tmandry/glide/commit/7ba308901f4ce88efaaffe743a1fb4ba742a3619))
-* Resize the group a window is in when no direction is given ([49ba0ae](https://github.com/tmandry/glide/commit/49ba0aee9ab06acd28515c4aadddb03043afa86a))
-* Stop Glide from reacting to its own windows when group bars are disabled ([2837add](https://github.com/tmandry/glide/commit/2837add2ce3911743e869ed43da59014714b7e59))
-
-
-### Performance Improvements
-
-* Rate limit saving the layout ([e1705de](https://github.com/tmandry/glide/commit/e1705de9dd47cc115887ffc3fa0aebc2ad5e4fb4))
+* Leave native macOS fullscreen Spaces unmanaged, so other windows opened there
+  float instead of becoming hidden in a layout behind the fullscreen window
+  ([#257](https://github.com/tmandry/glide/pull/257)).
+* Remove a leftover group bar after the last window on a Space closes, while
+  preserving the Space's portrait or landscape orientation
+  ([#258](https://github.com/tmandry/glide/pull/258),
+  [08468f7](https://github.com/tmandry/glide/commit/08468f7b070a97a27b8154836bb1ed1dc61b2655)).
+* Avoid creating and observing Glide's own windows when group bars are disabled
+  ([#254](https://github.com/tmandry/glide/pull/254)).
 
 ## [0.2.16](https://github.com/tmandry/glide/compare/v0.2.15...v0.2.16) (2026-09-28)
 
