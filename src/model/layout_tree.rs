@@ -817,8 +817,9 @@ impl LayoutTree {
         true
     }
 
-    /// Grows or shrinks `node` along whichever axis its container lays its
-    /// children out on, so one key works for both a row and a column.
+    /// Grows or shrinks `node` along whichever axis the nearest container
+    /// that lays its children out uses, so one key works for both a row and
+    /// a column.
     ///
     /// The space always comes from the neighbor after `node`, falling back
     /// to the one before it when `node` is last. A node in the middle of a
@@ -827,13 +828,16 @@ impl LayoutTree {
     /// changes, so choosing by size would move a different edge on each
     /// press.
     pub fn resize_smart(&mut self, node: NodeId, screen_ratio: f64) -> bool {
-        let Some(parent) = node.parent(&self.tree.map) else {
+        // Space is divided within a group's parent, not the group, so skip
+        // past any group the node is inside of.
+        let Some(kind) = node
+            .ancestors(&self.tree.map)
+            .skip(1)
+            .map(|container| self.tree.data.size.kind(container))
+            .find(|kind| !kind.is_group())
+        else {
             return false;
         };
-        let kind = self.tree.data.size.kind(parent);
-        if kind.is_group() {
-            return false;
-        }
         let (forward, back) = match kind.orientation() {
             Orientation::Horizontal => (Direction::Right, Direction::Left),
             Orientation::Vertical => (Direction::Down, Direction::Up),
@@ -1633,6 +1637,35 @@ mod tests {
                 (WindowId::new(2, 2), rect(500, 500, 500, 500)),
             ],
         );
+    }
+
+    #[test]
+    fn resize_smart_resizes_the_group_a_window_is_in() {
+        // ┌─────────┬─────┐
+        // │ b1 / b2 │ a1  │
+        // └─────────┴─────┘
+        let mut tree = LayoutTree::new();
+        let layout = tree.create_layout();
+        let root = tree.root(layout);
+        let group = tree.add_container(root, ContainerKind::Tabbed);
+        let b1 = tree.add_window_under(layout, group, WindowId::new(2, 1));
+        let _b2 = tree.add_window_under(layout, group, WindowId::new(2, 2));
+        tree.add_window_under(layout, root, WindowId::new(1, 1));
+        let screen = rect(0, 0, 1000, 1000);
+        let config = &Config::default();
+
+        let a1_frame = |tree: &mut LayoutTree| {
+            tree.calculate_layout(layout, screen, config)
+                .into_iter()
+                .find(|(wid, _)| *wid == WindowId::new(1, 1))
+                .unwrap()
+                .1
+        };
+        assert_eq!(a1_frame(&mut tree), rect(500, 0, 500, 1000));
+
+        // The window can't be resized within its group, so its group grows.
+        assert!(tree.resize_smart(b1, 0.2));
+        assert_eq!(a1_frame(&mut tree), rect(700, 0, 300, 1000));
     }
 
     #[test]
