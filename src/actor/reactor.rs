@@ -261,7 +261,16 @@ pub struct Reactor {
     /// Saves the state. Not present in tests or when saving is disabled.
     saver: Option<Saver>,
     space_state: Option<SpaceState>,
+    /// When the state was last saved, used to rate limit saving.
+    last_save: Option<Instant>,
+    /// When to save state that changed within [`SAVE_INTERVAL`] of the last
+    /// save, if any.
+    next_save: Option<Instant>,
 }
+
+/// How long to wait before saving the state again. Every change to the layout
+/// writes the whole thing, and even a focus change is a change to it.
+const SAVE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// How many times in a row we write the same frame to a window before giving
 /// up, and how long a pause resets the count.
@@ -435,6 +444,8 @@ impl Reactor {
             group_indicators_tx: group_indicators_tx,
             saver: None,
             space_state: None,
+            last_save: None,
+            next_save: None,
         }
     }
 
@@ -460,6 +471,7 @@ impl Reactor {
         // loop to one reading of the clock per iteration, which everything in
         // that iteration is evaluated against.
         let mut ticking = false;
+        let mut save_timer = Timer::manual();
 
         loop {
             tokio::select! {
@@ -472,6 +484,12 @@ impl Reactor {
                         tick_timer.set_next_fire(Duration::ZERO);
                         ticking = true;
                     }
+                    if let Some(at) = self.next_save {
+                        save_timer.set_next_fire(at.saturating_duration_since(now));
+                    }
+                }
+                _ = save_timer.next(), if self.next_save.is_some() => {
+                    self.save_state(Instant::now());
                 }
                 _ = tick_timer.next(), if ticking => {
                     let now = Instant::now();
@@ -513,7 +531,7 @@ impl Reactor {
             self.layout.generation() != before.0 || self.layout.serialize_to_string() == before.1,
             "layout changed without changing its generation"
         );
-        self.autosave();
+        self.autosave(now);
     }
 
     fn handle_event_inner(&mut self, event: Event, now: Instant) {
@@ -934,12 +952,25 @@ impl Reactor {
         }
     }
 
-    fn autosave(&mut self) {
+    fn autosave(&mut self, now: Instant) {
+        if self.saver.is_none() {
+            return;
+        }
         // Drags and resizes change the layout on every mouse event; save once
         // when they end.
         if self.in_drag || self.resizing_window.is_some() {
             return;
         }
+        match self.last_save {
+            // Wait out the rest of the interval. The run loop saves then.
+            Some(last) if now < last + SAVE_INTERVAL => self.next_save = Some(last + SAVE_INTERVAL),
+            _ => self.save_state(now),
+        }
+    }
+
+    fn save_state(&mut self, now: Instant) {
+        self.next_save = None;
+        self.last_save = Some(now);
         if let (Some(saver), Some(spaces)) = (&mut self.saver, &self.space_state) {
             saver.save_if_changed(&self.layout, spaces);
         }
@@ -1367,6 +1398,8 @@ impl Reactor {
 
 #[cfg(test)]
 pub mod tests {
+    use std::fs;
+
     use itertools::Itertools;
     use objc2_core_foundation::{CGPoint, CGSize};
     use test_log::test;
@@ -2533,6 +2566,55 @@ pub mod tests {
         reactor.handle_event(Event::MouseUp);
         reactor.saver.take().unwrap().finish().unwrap();
         assert!(path.exists(), "should save when the resize ends");
+    }
+
+    #[test]
+    fn it_rate_limits_saving() {
+        let mut apps = Apps::new();
+        let mut reactor = Reactor::new_for_test(LayoutManager::new_for_test());
+        reactor.handle_event(Event::ScreenParametersChanged {
+            frames: vec![CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.))],
+            spaces: vec![Some(SpaceId::new(1))],
+            scale_factors: vec![2.0],
+            converter: CoordinateConverter::default(),
+            on_screen: Default::default(),
+        });
+        reactor.handle_events(apps.make_app(1, make_windows(2)));
+        reactor.handle_event(Event::StartupComplete);
+        reactor.handle_event(Event::ApplicationGloballyActivated(1));
+        reactor.handle_event(Event::SpaceStateChanged(SpaceState {
+            enabled: Default::default(),
+            disabled: Default::default(),
+            globally_enabled: true,
+        }));
+        apps.simulate_until_quiet(&mut reactor);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.ron");
+        let session = crate::sys::session::LoginSessionId::new_for_test("a");
+        let start = Instant::now();
+        // Each saver is replaced after it is finished, so anything it is asked
+        // to save is written.
+        let focus =
+            |idx| Event::ApplicationMainWindowChanged(1, Some(WindowId::new(1, idx)), Quiet::No);
+
+        reactor.saver = Some(Saver::spawn(path.clone(), session.clone()));
+        reactor.handle_event_at(focus(1), start);
+        reactor.saver.take().unwrap().finish().unwrap();
+        assert!(path.exists(), "the first change should save");
+
+        fs::remove_file(&path).unwrap();
+        reactor.saver = Some(Saver::spawn(path.clone(), session.clone()));
+        reactor.handle_event_at(focus(2), start + SAVE_INTERVAL / 2);
+        reactor.saver.take().unwrap().finish().unwrap();
+        assert!(!path.exists(), "a change within the interval should wait");
+        assert_eq!(reactor.next_save, Some(start + SAVE_INTERVAL));
+
+        reactor.saver = Some(Saver::spawn(path.clone(), session));
+        reactor.handle_event_at(focus(1), start + SAVE_INTERVAL);
+        reactor.saver.take().unwrap().finish().unwrap();
+        assert!(path.exists(), "the change should save once the interval is up");
+        assert_eq!(reactor.next_save, None);
     }
 
     /// The MouseUp event can be lost, e.g. if the event tap is disabled while
