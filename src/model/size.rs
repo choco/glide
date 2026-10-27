@@ -202,8 +202,7 @@ impl Size {
 
     pub(super) fn reset_root(&mut self, node: NodeId) {
         let info = &mut self.info[node];
-        info.kind = ContainerKind::default();
-        info.last_ungrouped_kind = ContainerKind::default();
+        info.kind = info.last_ungrouped_kind;
         info.is_fullscreen = false;
     }
 

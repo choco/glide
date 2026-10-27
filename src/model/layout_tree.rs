@@ -1509,6 +1509,18 @@ mod tests {
         assert_eq!(tree.container_kind(root), ContainerKind::Horizontal);
     }
 
+    #[test]
+    fn remove_last_window_keeps_the_root_orientation() {
+        let mut tree = LayoutTree::new();
+        let layout = tree.create_layout_with_orientation(Orientation::Vertical);
+        let root = tree.root(layout);
+        tree.set_container_kind(root, ContainerKind::Stacked);
+        tree.add_window_under(layout, root, WindowId::new(1, 1));
+
+        tree.remove_window(WindowId::new(1, 1));
+        assert_eq!(tree.container_kind(root), ContainerKind::Vertical);
+    }
+
     fn rect(x: i32, y: i32, w: i32, h: i32) -> CGRect {
         CGRect::new(
             CGPoint::new(f64::from(x), f64::from(y)),
