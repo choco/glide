@@ -95,7 +95,7 @@ fn main() {
     let mtm = MainThreadMarker::new().unwrap();
 
     // When run from the command line, alerts won't be visible unless this is called.
-    if !NSApp(mtm).setActivationPolicy(NSApplicationActivationPolicy::Regular) {
+    if !NSApp(mtm).setActivationPolicy(NSApplicationActivationPolicy::Accessory) {
         warn!("Failed to set activation policy");
     }
 
@@ -113,16 +113,13 @@ fn main() {
             Run \"glide config verify\" on the command line to see errors."
         ));
         println!("{}", alert.messageText());
-        alert.runModal();
+        glide_wm::ui::alert::run_modal(&alert);
         std::process::exit(3);
     };
     config.settings.animate &= !opt.no_animate;
     config.settings.default_disable |= opt.default_disable;
     let config = Arc::new(config);
 
-    if !NSApp(mtm).setActivationPolicy(NSApplicationActivationPolicy::Accessory) {
-        warn!("Failed to set activation policy");
-    }
     NSApp(mtm).finishLaunching();
 
     if opt.validate {
