@@ -19,6 +19,7 @@ use tracing::{error, info, warn};
 
 use crate::sys::bundle::{MustExit, relaunch_current_bundle};
 use crate::sys::event::HotkeyManager;
+use crate::ui::alert;
 
 pub struct PermissionNotGranted;
 
@@ -70,7 +71,7 @@ fn obtain_ax_permissions(mtm: MainThreadMarker) -> Result<(), PermissionNotGrant
     request_button.setKeyEquivalent(ns_string!("\r"));
     first_button.setKeyEquivalent(ns_string!(""));
 
-    match alert.runModal() {
+    match alert::run_modal(&alert) {
         r if r == NSAlertFirstButtonReturn => (),
         r if r == NSAlertSecondButtonReturn => return Err(PermissionNotGranted),
         _ => error!("Unexpected button press"),
@@ -181,7 +182,7 @@ fn check_input_permissions(mtm: MainThreadMarker) -> Result<(), PermissionNotGra
     ));
     alert.addButtonWithTitle(ns_string!("Quit"));
     alert.addButtonWithTitle(ns_string!("Ignore"));
-    match alert.runModal() {
+    match alert::run_modal(&alert) {
         r if r == NSAlertFirstButtonReturn => (),
         r if r == NSAlertSecondButtonReturn => {
             warn!("User chose to ignore missing input monitoring permission");

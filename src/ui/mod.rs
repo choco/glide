@@ -3,6 +3,7 @@
 
 //! UI components.
 
+pub mod alert;
 pub mod group_bar;
 pub mod permission_flow;
 pub mod status_bar;
